@@ -5,7 +5,7 @@ langchain-core
 langchain-chroma
 langchain-huggingface
 langchain-groq
-chromadb
+chromadb==0.4.24
 sentence-transformers
 pymupdf
 yfinance
@@ -13,3 +13,4 @@ plotly
 numpy
 duckduckgo-search
 pillow
+protobuf==3.20.3

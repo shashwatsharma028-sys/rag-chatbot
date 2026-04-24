@@ -4,12 +4,10 @@ langchain-community==0.3.24
 langchain-core==0.3.65
 langchain-groq==0.3.2
 langchain-text-splitters==0.3.8
-pymupdf==1.25.5
-pymupdf4llm
+pymupdf
 duckduckgo-search
-ddgs
 yfinance
 plotly
 numpy
-pillow
 scikit-learn
+pillow

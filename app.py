@@ -1,7 +1,5 @@
 import streamlit as st
-import tempfile
-import json
-import numpy as np
+import tempfile, json, numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from langchain_community.document_loaders import PyMuPDFLoader
@@ -10,124 +8,103 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-st.set_page_config(page_title='DocMind AI Pro', page_icon='🧠', layout='wide')
+st.set_page_config(page_title='DocMind AI Pro+', page_icon='🧠', layout='wide')
 
-st.markdown('''
+st.markdown("""
 <style>
-.main{padding-top:1rem}
-.block-container{padding-top:1rem;max-width:1400px}
-.hero{background:linear-gradient(135deg,#667eea,#764ba2);padding:2rem;border-radius:20px;color:white;text-align:center;margin-bottom:1rem}
-.card{background:#11182722;border:1px solid #e5e7eb33;padding:1rem;border-radius:18px}
-.metric{padding:1rem;border-radius:16px;background:#f8fafc;border:1px solid #e5e7eb}
+.block-container{max-width:1450px;padding-top:1rem}
+.hero{padding:2rem;border-radius:22px;background:linear-gradient(135deg,#0f172a,#4338ca);color:white;text-align:center;margin-bottom:1rem}
+.card{padding:1rem;border:1px solid #e5e7eb;border-radius:18px;background:#ffffff08}
 </style>
-''', unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-st.markdown("""<div class='hero'><h1>🧠 DocMind AI Pro</h1><p>RAG-Powered Financial Document Intelligence Platform</p></div>""", unsafe_allow_html=True)
+st.markdown("<div class='hero'><h1>🧠 DocMind AI Pro+</h1><p>Financial Research Copilot • RAG • Analytics • Citations</p></div>", unsafe_allow_html=True)
 
-for k,v in {
-'chat_history':[], 'chunks':[], 'indexed_files':[], 'vectorizer':None, 'matrix':None
-}.items():
-    if k not in st.session_state:
-        st.session_state[k]=v
+for k,v in {'docs':[],'chunks':[],'vec':None,'mat':None,'chat':[]}.items():
+    if k not in st.session_state: st.session_state[k]=v
 
 @st.cache_resource
-def load_llm(key):
-    return ChatGroq(api_key=key, model='llama-3.1-8b-instant', temperature=0)
+def llm(key): return ChatGroq(api_key=key, model='llama-3.1-8b-instant', temperature=0)
 
 @st.cache_resource
-def build_index(texts):
-    vec=TfidfVectorizer(stop_words='english')
+def build(texts):
+    vec=TfidfVectorizer(stop_words='english', max_features=5000)
     mat=vec.fit_transform(texts)
     return vec,mat
 
 with st.sidebar:
-    st.header('⚙️ Settings')
-    api_key=st.text_input('Groq API Key', type='password')
-    mode=st.radio('Mode',['💬 Chat','📊 Compare','📈 Finance'])
-    files=st.file_uploader('Upload PDFs', type=['pdf'], accept_multiple_files=True)
+    key=st.text_input('Groq API Key', type='password')
+    mode=st.radio('Mode',['Chat','Compare','Dashboard','Summary'])
+    files=st.file_uploader('Upload PDFs', type='pdf', accept_multiple_files=True)
 
-if files and api_key:
+if files:
     names=[f.name for f in files]
-    if names!=st.session_state.indexed_files:
-        all_chunks=[]
-        with st.spinner('Indexing documents...'):
-            for f in files:
-                with tempfile.NamedTemporaryFile(delete=False,suffix='.pdf') as tmp:
-                    tmp.write(f.read())
-                    path=tmp.name
-                docs=PyMuPDFLoader(path).load()
-                splitter=RecursiveCharacterTextSplitter(chunk_size=600,chunk_overlap=80)
-                chunks=splitter.split_documents(docs)
-                for c in chunks:
-                    c.metadata['source']=f.name
-                all_chunks.extend(chunks)
-        texts=[c.page_content for c in all_chunks]
-        vec,mat=build_index(texts)
-        st.session_state.chunks=all_chunks
-        st.session_state.indexed_files=names
-        st.session_state.vectorizer=vec
-        st.session_state.matrix=mat
-        st.success(f'Indexed {len(names)} file(s) successfully.')
+    if names!=st.session_state.docs:
+        chunks=[]
+        for f in files:
+            with tempfile.NamedTemporaryFile(delete=False,suffix='.pdf') as t:
+                t.write(f.read()); path=t.name
+            docs=PyMuPDFLoader(path).load()
+            parts=RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=100).split_documents(docs)
+            for p in parts: p.metadata['source']=f.name
+            chunks.extend(parts)
+        texts=[c.page_content for c in chunks]
+        vec,mat=build(texts)
+        st.session_state.docs=names; st.session_state.chunks=chunks; st.session_state.vec=vec; st.session_state.mat=mat
+        st.success('Indexed documents successfully.')
 
-col1,col2,col3=st.columns(3)
-with col1: st.metric('PDFs', len(st.session_state.indexed_files))
-with col2: st.metric('Chunks', len(st.session_state.chunks))
-with col3: st.metric('Status', 'Ready' if api_key else 'API Key Needed')
+c1,c2,c3=st.columns(3)
+c1.metric('PDFs', len(st.session_state.docs))
+c2.metric('Chunks', len(st.session_state.chunks))
+c3.metric('Status', 'Ready' if key else 'Need API Key')
 
-def retrieve(q,k=4):
-    if st.session_state.vectorizer is None:
-        return [],0
-    qv=st.session_state.vectorizer.transform([q])
-    sims=cosine_similarity(qv, st.session_state.matrix)[0]
-    idx=np.argsort(sims)[::-1][:k]
-    docs=[st.session_state.chunks[i] for i in idx]
-    conf=round(float(np.mean([sims[i] for i in idx]))*100,1)
-    return docs,conf
+def search(q,k=4):
+    if st.session_state.vec is None: return [],0
+    sims=cosine_similarity(st.session_state.vec.transform([q]), st.session_state.mat)[0]
+    ids=np.argsort(sims)[::-1][:k]
+    docs=[st.session_state.chunks[i] for i in ids]
+    return docs, round(float(np.mean([sims[i] for i in ids]))*100,1)
 
-if mode=='💬 Chat':
-    st.subheader('Chat with your PDFs')
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg['role']):
-            st.markdown(msg['content'])
-    q=st.chat_input('Ask anything about your PDFs...')
-    if q and api_key:
-        st.session_state.chat_history.append({'role':'user','content':q})
-        with st.chat_message('user'): st.markdown(q)
-        with st.chat_message('assistant'):
-            docs,conf=retrieve(q)
-            ctx='\n\n'.join([d.page_content for d in docs])
-            llm=load_llm(api_key)
-            prompt=PromptTemplate.from_template('Answer from context. Mention sources if possible. Context:{context} Question:{question} Answer:')
-            ans=(prompt|llm|StrOutputParser()).invoke({'context':ctx,'question':q})
-            st.markdown(ans)
-            st.progress(min(int(conf),100))
-            st.caption(f'Confidence: {conf}%')
-            st.session_state.chat_history.append({'role':'assistant','content':ans})
+if mode=='Chat':
+    q=st.chat_input('Ask about your documents...')
+    for m in st.session_state.chat:
+        with st.chat_message(m['r']): st.markdown(m['c'])
+    if q and key:
+        st.session_state.chat.append({'r':'user','c':q})
+        docs,conf=search(q)
+        ctx='\n\n'.join([d.page_content for d in docs])
+        prompt=PromptTemplate.from_template('Use context to answer with bullet points. Include citations. Context:{c} Question:{q}')
+        ans=(prompt|llm(key)|StrOutputParser()).invoke({'c':ctx,'q':q})
+        cites='\n'.join([f"• {d.metadata.get('source','file')} p.{d.metadata.get('page',0)+1}" for d in docs])
+        out=ans+f"\n\n**Sources**\n{cites}\n\n**Confidence:** {conf}%"
+        st.session_state.chat.append({'r':'assistant','c':out})
+        st.rerun()
 
-elif mode=='📊 Compare':
-    st.subheader('Compare Two Documents')
-    if len(st.session_state.indexed_files)>=2:
-        a=st.selectbox('Document 1', st.session_state.indexed_files)
-        b=st.selectbox('Document 2', st.session_state.indexed_files, index=1)
-        topic=st.text_input('Topic', 'revenue growth risk')
-        if st.button('Compare') and api_key:
-            llm=load_llm(api_key)
-            res=llm.invoke(f'Compare {a} and {b} on {topic} in concise bullet points.')
+elif mode=='Compare':
+    if len(st.session_state.docs)>=2:
+        a=st.selectbox('Doc A', st.session_state.docs)
+        b=st.selectbox('Doc B', st.session_state.docs, index=1)
+        topic=st.text_input('Compare Topic','revenue risk growth')
+        if st.button('Run Comparison') and key:
+            res=llm(key).invoke(f'Compare {a} and {b} on {topic}. Use table style bullets.')
             st.write(res.content if hasattr(res,'content') else str(res))
     else:
         st.info('Upload at least 2 PDFs.')
 
-else:
-    st.subheader('Financial Dashboard')
-    ticker=st.text_input('Ticker', 'AAPL')
-    if st.button('Load Finance'):
-        import yfinance as yf
-        import plotly.graph_objects as go
-        data=yf.Ticker(ticker).history(period='6mo')
-        fig=go.Figure()
-        fig.add_scatter(x=data.index,y=data['Close'],mode='lines',name='Close')
-        fig.update_layout(height=450)
-        st.plotly_chart(fig,use_container_width=True)
+elif mode=='Dashboard':
+    st.subheader('Auto KPI Dashboard')
+    st.info('Upload annual reports and ask metrics like revenue, profit, debt, risk.')
+    q=st.text_input('Metric Query','revenue trend and risks')
+    if st.button('Generate') and key:
+        docs,_=search(q,6)
+        txt=' '.join([d.page_content[:1000] for d in docs])
+        st.write((llm(key).invoke('Summarize KPIs from: '+txt).content))
 
-st.markdown('---')
-st.caption('Built by Shashwat Sharma • Deployed Portfolio Project')
+else:
+    st.subheader('Executive Summary')
+    if st.button('Generate Summary') and key:
+        docs,_=search('summary overview main findings',6)
+        txt=' '.join([d.page_content[:1000] for d in docs])
+        st.write((llm(key).invoke('Create executive summary with risks and opportunities: '+txt).content))
+
+st.caption('Built by Shashwat Sharma • FAANG-level Portfolio Project')

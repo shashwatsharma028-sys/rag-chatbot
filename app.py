@@ -1,410 +1,133 @@
-import os
-import json
-import tempfile
-import numpy as np
 import streamlit as st
+import tempfile
+import json
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_groq import ChatGroq
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
-# ---------------------------------------------------
-# PAGE CONFIG
-# ---------------------------------------------------
-st.set_page_config(
-    page_title="DocMind AI",
-    page_icon="🧠",
-    layout="wide"
-)
+st.set_page_config(page_title='DocMind AI Pro', page_icon='🧠', layout='wide')
 
-# ---------------------------------------------------
-# CACHE HELPERS
-# ---------------------------------------------------
-@st.cache_data(ttl=600)
-def get_stock_data(ticker, period):
-    import yfinance as yf
-    stock = yf.Ticker(ticker)
-    return stock.history(period=period), stock.info
+st.markdown('''
+<style>
+.main{padding-top:1rem}
+.block-container{padding-top:1rem;max-width:1400px}
+.hero{background:linear-gradient(135deg,#667eea,#764ba2);padding:2rem;border-radius:20px;color:white;text-align:center;margin-bottom:1rem}
+.card{background:#11182722;border:1px solid #e5e7eb33;padding:1rem;border-radius:18px}
+.metric{padding:1rem;border-radius:16px;background:#f8fafc;border:1px solid #e5e7eb}
+</style>
+''', unsafe_allow_html=True)
+
+st.markdown("""<div class='hero'><h1>🧠 DocMind AI Pro</h1><p>RAG-Powered Financial Document Intelligence Platform</p></div>""", unsafe_allow_html=True)
+
+for k,v in {
+'chat_history':[], 'chunks':[], 'indexed_files':[], 'vectorizer':None, 'matrix':None
+}.items():
+    if k not in st.session_state:
+        st.session_state[k]=v
 
 @st.cache_resource
-def get_llm(api_key):
-    from langchain_groq import ChatGroq
-    return ChatGroq(
-        api_key=api_key,
-        model="llama-3.1-8b-instant",
-        temperature=0
-    )
+def load_llm(key):
+    return ChatGroq(api_key=key, model='llama-3.1-8b-instant', temperature=0)
 
-# ---------------------------------------------------
-# STYLE
-# ---------------------------------------------------
-st.markdown("""
-<style>
-.main-header {
-    background: linear-gradient(135deg,#667eea,#764ba2);
-    padding:2rem;
-    border-radius:14px;
-    color:white;
-    text-align:center;
-    margin-bottom:2rem;
-}
-.metric-card{
-    background:#f8f9ff;
-    border:1px solid #e0e4ff;
-    border-radius:12px;
-    padding:1rem;
-    text-align:center;
-}
-.metric-card h3{
-    margin:0;
-    color:#667eea;
-}
-.source-tag{
-    background:#eef2ff;
-    padding:4px 8px;
-    border-radius:8px;
-    margin:2px;
-    display:inline-block;
-}
-</style>
-""", unsafe_allow_html=True)
+@st.cache_resource
+def build_index(texts):
+    vec=TfidfVectorizer(stop_words='english')
+    mat=vec.fit_transform(texts)
+    return vec,mat
 
-# ---------------------------------------------------
-# HEADER
-# ---------------------------------------------------
-st.markdown("""
-<div class="main-header">
-<h1>🧠 DocMind AI</h1>
-<p>AI-Powered Financial Document Intelligence System</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------------------------------------------------
-# SIDEBAR
-# ---------------------------------------------------
 with st.sidebar:
-    st.subheader("⚙️ Configuration")
+    st.header('⚙️ Settings')
+    api_key=st.text_input('Groq API Key', type='password')
+    mode=st.radio('Mode',['💬 Chat','📊 Compare','📈 Finance'])
+    files=st.file_uploader('Upload PDFs', type=['pdf'], accept_multiple_files=True)
 
-    groq_key = st.text_input(
-        "Groq API Key",
-        type="password",
-        value=os.getenv("GROQ_API_KEY", ""),
-        placeholder="gsk_..."
-    )
+if files and api_key:
+    names=[f.name for f in files]
+    if names!=st.session_state.indexed_files:
+        all_chunks=[]
+        with st.spinner('Indexing documents...'):
+            for f in files:
+                with tempfile.NamedTemporaryFile(delete=False,suffix='.pdf') as tmp:
+                    tmp.write(f.read())
+                    path=tmp.name
+                docs=PyMuPDFLoader(path).load()
+                splitter=RecursiveCharacterTextSplitter(chunk_size=600,chunk_overlap=80)
+                chunks=splitter.split_documents(docs)
+                for c in chunks:
+                    c.metadata['source']=f.name
+                all_chunks.extend(chunks)
+        texts=[c.page_content for c in all_chunks]
+        vec,mat=build_index(texts)
+        st.session_state.chunks=all_chunks
+        st.session_state.indexed_files=names
+        st.session_state.vectorizer=vec
+        st.session_state.matrix=mat
+        st.success(f'Indexed {len(names)} file(s) successfully.')
 
-    uploaded_files = st.file_uploader(
-        "Upload PDF Files",
-        type=["pdf"],
-        accept_multiple_files=True
-    )
+col1,col2,col3=st.columns(3)
+with col1: st.metric('PDFs', len(st.session_state.indexed_files))
+with col2: st.metric('Chunks', len(st.session_state.chunks))
+with col3: st.metric('Status', 'Ready' if api_key else 'API Key Needed')
 
-    mode = st.radio(
-        "Mode",
-        ["💬 Chat with PDFs", "📊 Compare Documents", "📈 Financial Analysis"]
-    )
-
-# ---------------------------------------------------
-# SESSION STATE
-# ---------------------------------------------------
-defaults = {
-    "chat_history": [],
-    "chunks": [],
-    "doc_chunks": {},
-    "vectorizer": None,
-    "tfidf_matrix": None,
-    "indexed_files": [],
-    "total_chunks": 0
-}
-
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# ---------------------------------------------------
-# PDF INDEXING
-# ---------------------------------------------------
-def process_pdfs(files):
-    from langchain_community.document_loaders import PyMuPDFLoader
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_core.documents import Document
-    from sklearn.feature_extraction.text import TfidfVectorizer
-
-    all_chunks = []
-    doc_chunks = {}
-
-    progress = st.progress(0, text="Processing PDFs...")
-
-    for i, file in enumerate(files):
-        progress.progress(i / len(files), text=f"Reading {file.name}")
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
-            f.write(file.read())
-            path = f.name
-
-        loader = PyMuPDFLoader(path)
-        docs = loader.load()
-
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
-        )
-
-        chunks = splitter.split_documents(docs)
-
-        for c in chunks:
-            c.metadata["source"] = file.name
-
-        doc_chunks[file.name] = chunks
-        all_chunks.extend(chunks)
-
-    texts = [c.page_content for c in all_chunks]
-
-    vectorizer = TfidfVectorizer()
-    tfidf = vectorizer.fit_transform(texts)
-
-    st.session_state.chunks = all_chunks
-    st.session_state.doc_chunks = doc_chunks
-    st.session_state.vectorizer = vectorizer
-    st.session_state.tfidf_matrix = tfidf
-    st.session_state.indexed_files = [f.name for f in files]
-    st.session_state.total_chunks = len(all_chunks)
-
-    progress.empty()
-    st.success("✅ PDFs indexed successfully")
-
-# ---------------------------------------------------
-# RETRIEVAL
-# ---------------------------------------------------
-def retrieve_chunks(query, k=4):
-    from sklearn.metrics.pairwise import cosine_similarity
-
+def retrieve(q,k=4):
     if st.session_state.vectorizer is None:
-        return [], 0
+        return [],0
+    qv=st.session_state.vectorizer.transform([q])
+    sims=cosine_similarity(qv, st.session_state.matrix)[0]
+    idx=np.argsort(sims)[::-1][:k]
+    docs=[st.session_state.chunks[i] for i in idx]
+    conf=round(float(np.mean([sims[i] for i in idx]))*100,1)
+    return docs,conf
 
-    q = st.session_state.vectorizer.transform([query])
-    scores = cosine_similarity(q, st.session_state.tfidf_matrix)[0]
-
-    idx = np.argsort(scores)[::-1][:k]
-
-    docs = [st.session_state.chunks[i] for i in idx]
-
-    conf = round(float(np.mean([scores[i] for i in idx])) * 100, 1)
-
-    return docs, conf
-
-# ---------------------------------------------------
-# AUTO INDEX
-# ---------------------------------------------------
-new_files = [f.name for f in uploaded_files] if uploaded_files else []
-
-if uploaded_files and new_files != st.session_state.indexed_files:
-    process_pdfs(uploaded_files)
-
-# ---------------------------------------------------
-# SIDEBAR DOC STATUS
-# ---------------------------------------------------
-if st.session_state.indexed_files:
-    with st.sidebar:
-        st.markdown("---")
-        st.write("Indexed Files")
-        for x in st.session_state.indexed_files:
-            st.write("✅", x)
-
-# ---------------------------------------------------
-# MODE 1 CHAT
-# ---------------------------------------------------
-if mode == "💬 Chat with PDFs":
-
+if mode=='💬 Chat':
+    st.subheader('Chat with your PDFs')
     for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    question = st.chat_input("Ask about your PDFs...")
-
-    if question:
-
-        if not groq_key:
-            st.warning("Please add GROQ key.")
-            st.stop()
-
-        if not st.session_state.chunks:
-            st.warning("Upload PDF first.")
-            st.stop()
-
-        st.session_state.chat_history.append(
-            {"role": "user", "content": question}
-        )
-
-        with st.chat_message("user"):
-            st.markdown(question)
-
-        with st.chat_message("assistant"):
-
-            with st.spinner("Thinking..."):
-
-                docs, conf = retrieve_chunks(question)
-
-                pdf_context = "\n\n".join(
-                    [d.page_content for d in docs]
-                )
-
-                try:
-                    from langchain_community.tools import DuckDuckGoSearchRun
-                    web_context = DuckDuckGoSearchRun().run(question)
-                except:
-                    web_context = "No web results."
-
-                from langchain_core.prompts import PromptTemplate
-                from langchain_core.output_parsers import StrOutputParser
-
-                prompt = PromptTemplate.from_template("""
-Use PDF context + web context.
-
-PDF:
-{pdf}
-
-WEB:
-{web}
-
-Question:
-{q}
-
-Answer clearly.
-""")
-
-                llm = get_llm(groq_key)
-
-                chain = prompt | llm | StrOutputParser()
-
-                answer = chain.invoke({
-                    "pdf": pdf_context,
-                    "web": web_context,
-                    "q": question
-                })
-
-                st.markdown(answer)
-
-                st.markdown(f"**Confidence:** {conf}%")
-
-                st.session_state.chat_history.append(
-                    {"role": "assistant", "content": answer}
-                )
-
-# ---------------------------------------------------
-# MODE 2 COMPARE
-# ---------------------------------------------------
-elif mode == "📊 Compare Documents":
-
-    if len(st.session_state.indexed_files) < 2:
-        st.info("Upload at least 2 PDFs.")
-    else:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            d1 = st.selectbox(
-                "Document 1",
-                st.session_state.indexed_files
-            )
-
-        with col2:
-            d2 = st.selectbox(
-                "Document 2",
-                st.session_state.indexed_files
-            )
-
-        topic = st.text_input("Topic to compare")
-
-        if st.button("Compare") and topic:
-
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            from sklearn.metrics.pairwise import cosine_similarity
-            from langchain_core.prompts import PromptTemplate
-            from langchain_core.output_parsers import StrOutputParser
-
-            def top_context(docname):
-                chunks = st.session_state.doc_chunks[docname]
-                texts = [c.page_content for c in chunks]
-
-                vec = TfidfVectorizer()
-                mat = vec.fit_transform(texts)
-
-                q = vec.transform([topic])
-
-                scores = cosine_similarity(q, mat)[0]
-                idx = np.argsort(scores)[::-1][:4]
-
-                return "\n\n".join(
-                    [chunks[i].page_content for i in idx]
-                )
-
-            c1 = top_context(d1)
-            c2 = top_context(d2)
-
-            llm = get_llm(groq_key)
-
-            prompt = PromptTemplate.from_template("""
-Compare documents on topic: {topic}
-
-Doc1:
-{c1}
-
-Doc2:
-{c2}
-
-Give similarities, differences, winner.
-""")
-
-            ans = (prompt | llm | StrOutputParser()).invoke({
-                "topic": topic,
-                "c1": c1,
-                "c2": c2
-            })
-
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+    q=st.chat_input('Ask anything about your PDFs...')
+    if q and api_key:
+        st.session_state.chat_history.append({'role':'user','content':q})
+        with st.chat_message('user'): st.markdown(q)
+        with st.chat_message('assistant'):
+            docs,conf=retrieve(q)
+            ctx='\n\n'.join([d.page_content for d in docs])
+            llm=load_llm(api_key)
+            prompt=PromptTemplate.from_template('Answer from context. Mention sources if possible. Context:{context} Question:{question} Answer:')
+            ans=(prompt|llm|StrOutputParser()).invoke({'context':ctx,'question':q})
             st.markdown(ans)
+            st.progress(min(int(conf),100))
+            st.caption(f'Confidence: {conf}%')
+            st.session_state.chat_history.append({'role':'assistant','content':ans})
 
-# ---------------------------------------------------
-# MODE 3 FINANCE
-# ---------------------------------------------------
+elif mode=='📊 Compare':
+    st.subheader('Compare Two Documents')
+    if len(st.session_state.indexed_files)>=2:
+        a=st.selectbox('Document 1', st.session_state.indexed_files)
+        b=st.selectbox('Document 2', st.session_state.indexed_files, index=1)
+        topic=st.text_input('Topic', 'revenue growth risk')
+        if st.button('Compare') and api_key:
+            llm=load_llm(api_key)
+            res=llm.invoke(f'Compare {a} and {b} on {topic} in concise bullet points.')
+            st.write(res.content if hasattr(res,'content') else str(res))
+    else:
+        st.info('Upload at least 2 PDFs.')
+
 else:
+    st.subheader('Financial Dashboard')
+    ticker=st.text_input('Ticker', 'AAPL')
+    if st.button('Load Finance'):
+        import yfinance as yf
+        import plotly.graph_objects as go
+        data=yf.Ticker(ticker).history(period='6mo')
+        fig=go.Figure()
+        fig.add_scatter(x=data.index,y=data['Close'],mode='lines',name='Close')
+        fig.update_layout(height=450)
+        st.plotly_chart(fig,use_container_width=True)
 
-    import plotly.graph_objects as go
-    import plotly.express as px
-
-    ticker = st.text_input("Ticker", value="AAPL")
-    period = st.selectbox(
-        "Period",
-        ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
-        index=3
-    )
-
-    if st.button("Load Chart"):
-
-        with st.spinner("Loading chart..."):
-
-            hist, info = get_stock_data(ticker, period)
-
-            if hist.empty:
-                st.error("Invalid ticker")
-            else:
-                st.metric(
-                    "Current Price",
-                    round(hist["Close"].iloc[-1], 2)
-                )
-
-                fig = go.Figure()
-
-                fig.add_trace(go.Candlestick(
-                    x=hist.index,
-                    open=hist["Open"],
-                    high=hist["High"],
-                    low=hist["Low"],
-                    close=hist["Close"]
-                ))
-
-                fig.update_layout(height=500)
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                vol = px.bar(
-                    hist,
-                    x=hist.index,
-                    y="Volume"
-                )
-
-                st.plotly_chart(vol, use_container_width=True)
+st.markdown('---')
+st.caption('Built by Shashwat Sharma • Deployed Portfolio Project')

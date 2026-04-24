@@ -1,7 +1,7 @@
 import streamlit as st
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
@@ -154,7 +154,7 @@ if new_files != st.session_state.indexed_files and uploaded_files and groq_key:
         all_chunks.extend(chunks)
 
     progress.progress(0.8, text="Building vector database...")
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
     vectorstore = Chroma.from_documents(all_chunks, embeddings)
 
     st.session_state.vectorstore = vectorstore

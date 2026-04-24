@@ -2,10 +2,8 @@ streamlit
 langchain==0.3.25
 langchain-community==0.3.24
 langchain-core==0.3.65
-langchain-chroma==0.2.4
 langchain-groq==0.3.2
 langchain-text-splitters==0.3.8
-chromadb==0.6.3
 pymupdf==1.25.5
 pymupdf4llm
 duckduckgo-search
@@ -14,5 +12,4 @@ yfinance
 plotly
 numpy
 pillow
-protobuf==4.25.3
-fastembed
+scikit-learn

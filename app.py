@@ -14,6 +14,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 import plotly.express as px
 import json
+import os 
 
 try:
     import pymupdf4llm
@@ -75,7 +76,12 @@ st.markdown("""
 
 with st.sidebar:
     st.markdown('<p class="sidebar-title">⚙️ Configuration</p>', unsafe_allow_html=True)
-    groq_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...", value=st.secrets.get("GROQ_API_KEY", ""))
+    groq_key = st.text_input(
+    "Groq API Key",
+    type="password",
+    placeholder="gsk_...",
+    value=st.secrets.get("GROQ_API_KEY", "")
+)
     st.markdown("---")
     st.markdown('<p class="sidebar-title">📂 Upload Documents</p>', unsafe_allow_html=True)
     uploaded_files = st.file_uploader("", type="pdf", accept_multiple_files=True, label_visibility="collapsed")

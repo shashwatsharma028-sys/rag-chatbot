@@ -7,6 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+import os 
 
 st.set_page_config(page_title='DocMind AI Pro+', page_icon='🧠', layout='wide')
 
@@ -33,7 +34,7 @@ def build(texts):
     return vec,mat
 
 with st.sidebar:
-    key=st.text_input('Groq API Key', type='password')
+    key = os.getenv("GROQ_API_KEY")
     mode=st.radio('Mode',['Chat','Compare','Dashboard','Summary'])
     files=st.file_uploader('Upload PDFs', type='pdf', accept_multiple_files=True)
 
@@ -106,5 +107,3 @@ else:
         docs,_=search('summary overview main findings',6)
         txt=' '.join([d.page_content[:1000] for d in docs])
         st.write((llm(key).invoke('Create executive summary with risks and opportunities: '+txt).content))
-
-st.caption('Built by Shashwat Sharma • FAANG-level Portfolio Project')

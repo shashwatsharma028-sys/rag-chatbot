@@ -1,23 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                        DocMind AI PRO++                                     ║
-║              AI-Powered Document Intelligence Platform                      ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  Tech Stack:                                                                 ║
-║  • Python 3.10+ | Streamlit 1.35+ | Pandas | NumPy | Plotly                 ║
-║  • Session-based OTP Authentication | SMTP-ready email hooks                ║
-║  • Real-time AI confidence scoring with semantic color coding               ║
-║  • Interactive analytics: gauge, KPI, sentiment, trend, heatmap            ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-Resume Keywords: Python, Streamlit, Plotly, Pandas, NumPy, OTP Authentication,
-Session Management, AI/ML Integration, Data Visualization, NLP, REST APIs,
-Full-Stack Web App, Responsive UI, Confidence Scoring, Dashboard Design
-
-Run:  streamlit run app.py
-Deps: pip install streamlit plotly pandas numpy
-"""
-
 import streamlit as st
 import random
 import time

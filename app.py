@@ -895,9 +895,10 @@ else:
                 fillcolor="rgba(99,102,241,0.15)",
             )
         )
+        radar_baseline_vals = radar_vals_baseline + [radar_vals_baseline[0]]
         fig_radar.add_trace(
             go.Scatterpolar(
-                r=radar_baseline_vals := radar_vals_baseline + [radar_vals_baseline[0]],
+                r=radar_baseline_vals,
                 theta=radar_categories + [radar_categories[0]],
                 fill="toself",
                 name="Baseline",
